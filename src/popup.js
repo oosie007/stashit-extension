@@ -6,11 +6,83 @@ const BASE_URL = `https://${PROJECT_ID}.supabase.co`;
 
 
 // UI Elements
+const loginForm = document.getElementById('loginForm');
+const mainContent = document.getElementById('mainContent');
+const loginButton = document.getElementById('login');
 const saveButton = document.getElementById('save');
+const emailInput = document.getElementById('email');
+const passwordInput = document.getElementById('password');
+const loginMessage = document.getElementById('loginMessage');
 const tagsInput = document.getElementById('tags');
 const messageElement = document.getElementById('message');
+const logoutButton = document.getElementById('logoutButton');
+
+// Check authentication status on popup open
+async function checkAuth() {
+  const session = await chrome.storage.local.get('session');
+  if (session.session) {
+    showMainContent();
+  } else {
+    showLoginForm();
+  }
+}
+
+// Show/hide UI elements
+function showLoginForm() {
+  loginForm.style.display = 'block';
+  mainContent.style.display = 'none';
+  logoutButton.style.display = 'none';
+}
+
+function showMainContent() {
+  loginForm.style.display = 'none';
+  mainContent.style.display = 'block';
+  logoutButton.style.display = 'flex';
+}
+
+// Login handler
+async function handleLogin() {
+  const email = emailInput.value;
+  const password = passwordInput.value;
+
+  if (!email || !password) {
+    showLoginMessage('Please enter both email and password', true);
+    return;
+  }
+
+  try {
+    const response = await fetch(`${BASE_URL}/auth/v1/token?grant_type=password`, {
+      method: 'POST',
+      headers: {
+        'apikey': ANON_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ email, password })
+    });
+
+    const data = await response.json();
+
+    if (response.ok) {
+      // Save session
+      await chrome.storage.local.set({ session: data });
+      showMainContent();
+    } else {
+      showLoginMessage(data.error_description || 'Login failed', true);
+    }
+  } catch (error) {
+    console.error('Login error:', error);
+    showLoginMessage('Login failed', true);
+  }
+}
 
 // Helper functions
+function showLoginMessage(message, isError = false) {
+  if (loginMessage) {
+    loginMessage.textContent = message;
+    loginMessage.style.color = isError ? 'red' : 'green';
+  }
+}
+
 function showMessage(message, isError = false) {
   if (messageElement) {
     messageElement.textContent = message;
@@ -27,17 +99,26 @@ function setLoading(isLoading) {
 
 // Save to Supabase function
 async function saveToSupabase(data) {
-  console.log('Sending to Supabase:', JSON.stringify(data, null, 2));
-  
+  const session = await chrome.storage.local.get('session');
+  if (!session.session) {
+    throw new Error('Not authenticated');
+  }
+
+  // Add user_id to the data before saving
+  const dataWithUser = {
+    ...data,
+    user_id: session.session.user.id // Add user_id from session
+  };
+
   const response = await fetch(`${BASE_URL}/rest/v1/stashed_items`, {
     method: 'POST',
     headers: {
       'apikey': ANON_KEY,
-      'Authorization': `Bearer ${ANON_KEY}`,
+      'Authorization': `Bearer ${session.session.access_token}`,
       'Content-Type': 'application/json',
       'Prefer': 'return=representation'
     },
-    body: JSON.stringify(data)
+    body: JSON.stringify(dataWithUser)
   });
 
   if (!response.ok) {
@@ -45,11 +126,7 @@ async function saveToSupabase(data) {
     throw new Error(`Failed to save: ${response.status} ${errorText}`);
   }
 
-  const contentType = response.headers.get("content-type");
-  if (contentType && contentType.includes("application/json")) {
-    return response.json();
-  }
-  return null;
+  return response.json();
 }
 
 // Function to get the main image from the webpage
@@ -147,8 +224,35 @@ async function getPageSummary(tabId) {
   return summaryData;
 }
 
+// Add logout handler function
+async function handleLogout() {
+  try {
+    // Clear session from storage
+    await chrome.storage.local.remove('session');
+    // Show login form
+    showLoginForm();
+    // Clear any existing messages
+    showMessage('');
+    // Clear tags input
+    if (tagsInput) {
+      tagsInput.value = '';
+    }
+  } catch (error) {
+    console.error('Logout error:', error);
+    showMessage('Failed to logout', true);
+  }
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
+  // Check auth status
+  await checkAuth();
+
+  // Add login handler
+  if (loginButton) {
+    loginButton.addEventListener('click', handleLogin);
+  }
+
   // Test Supabase connection
   try {
     // Verify stashed_items table exists
@@ -234,6 +338,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         saveButton.click();
       }
     });
+  }
+
+  // Add logout handler
+  if (logoutButton) {
+    logoutButton.addEventListener('click', handleLogout);
   }
 
   console.log('Popup script loaded');

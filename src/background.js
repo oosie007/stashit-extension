@@ -82,17 +82,29 @@ async function getPageSummary(tabId) {
   return summary;
 }
 
-// Save to Supabase
+// Updated saveToSupabase function for background.js
 async function saveToSupabase(data) {
+  // Get session from storage
+  const session = await chrome.storage.local.get('session');
+  if (!session.session) {
+    throw new Error('Not authenticated');
+  }
+
+  // Add user_id to the data
+  const dataWithUser = {
+    ...data,
+    user_id: session.session.user.id
+  };
+
   const response = await fetch(`${BASE_URL}/rest/v1/stashed_items`, {
     method: 'POST',
     headers: {
       'apikey': ANON_KEY,
-      'Authorization': `Bearer ${ANON_KEY}`,
+      'Authorization': `Bearer ${session.session.access_token}`,
       'Content-Type': 'application/json',
       'Prefer': 'return=representation'
     },
-    body: JSON.stringify(data)
+    body: JSON.stringify(dataWithUser)
   });
 
   if (!response.ok) {
