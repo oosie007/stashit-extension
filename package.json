@@ -1,0 +1,6 @@
+{
+  "scripts": {
+    "build:dev": "cp src/config.dev.js src/config.js && npm run build",
+    "build:prod": "cp src/config.prod.js src/config.js && npm run build"
+  }
+} 

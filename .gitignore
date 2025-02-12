@@ -18,4 +18,10 @@ build/
 
 # OS files
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# Config files
+src/config.js
+
+# Log files
+*.log 

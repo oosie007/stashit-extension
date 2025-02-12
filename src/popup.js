@@ -1,3 +1,5 @@
+import { API_URL } from './config.js';
+
 // Constants
 const PROJECT_ID = 'izcbuvdlbiifmalkdghs';
 const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml6Y2J1dmRsYmlpZm1hbGtkZ2hzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzgyMzE3NjEsImV4cCI6MjA1MzgwNzc2MX0.kqGZg5jK2armE2rM2KkKKUubfqZjUL7vXAP46ZJeTlI'
@@ -104,124 +106,66 @@ async function saveToSupabase(data) {
     throw new Error('Not authenticated');
   }
 
-  // Add user_id to the data before saving
-  const dataWithUser = {
-    ...data,
-    user_id: session.session.user.id // Add user_id from session
-  };
+  console.log('Session:', session.session);
+  console.log('Data to save:', data);
 
-  const response = await fetch(`${BASE_URL}/rest/v1/stashed_items`, {
-    method: 'POST',
-    headers: {
-      'apikey': ANON_KEY,
-      'Authorization': `Bearer ${session.session.access_token}`,
-      'Content-Type': 'application/json',
-      'Prefer': 'return=representation'
-    },
-    body: JSON.stringify(dataWithUser)
-  });
+  // Use the full URL directly
+  const apiUrl = window.location.hostname === 'localhost' 
+    ? 'http://localhost:3000/api/items'
+    : 'https://stashit-nine.vercel.app/api/items';
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Failed to save: ${response.status} ${errorText}`);
-  }
+  console.log('Sending request to:', apiUrl);
 
-  return response.json();
-}
+  try {
+    // First try to save directly to the API
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${session.session.access_token}`
+      },
+      body: JSON.stringify({
+        ...data,
+        user_id: session.session.user.id
+      })
+    });
 
-// Function to get the main image from the webpage
-async function getMainImage(tabId) {
-  const [{ result: imageData }] = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: () => {
-      // Helper function to validate URL
-      const isValidUrl = (url) => {
-        try {
-          new URL(url);
-          return url.startsWith('http') || url.startsWith('https');
-        } catch {
-          return false;
-        }
-      };
+    const responseText = await response.text();
+    console.log('Response status:', response.status);
+    console.log('Response text:', responseText);
 
-      // Get all possible meta tag images
-      const metaTags = {
-        'og:image': document.querySelector('meta[property="og:image"]')?.content,
-        'og:image:secure_url': document.querySelector('meta[property="og:image:secure_url"]')?.content,
-        'twitter:image': document.querySelector('meta[name="twitter:image"]')?.content,
-        'twitter:image:src': document.querySelector('meta[name="twitter:image:src"]')?.content,
-        'article:image': document.querySelector('meta[property="article:image"]')?.content,
-      };
-
-      // Get all image elements
-      const images = Array.from(document.getElementsByTagName('img'))
-        .map(img => ({
-          src: img.src,
-          width: img.naturalWidth || img.width,
-          height: img.naturalHeight || img.height,
-          area: (img.naturalWidth || img.width) * (img.naturalHeight || img.height)
-        }))
-        .filter(img => {
-          return img.width > 100 && 
-                 img.height > 100 && 
-                 isValidUrl(img.src) && 
-                 !img.src.includes('icon') &&
-                 !img.src.includes('logo') &&
-                 !img.src.startsWith('data:');
+    if (!response.ok) {
+      // If API fails, try saving directly to Supabase as fallback
+      console.log('API save failed, trying direct Supabase save');
+      const supabaseResponse = await fetch(`${BASE_URL}/rest/v1/stashed_items`, {
+        method: 'POST',
+        headers: {
+          'apikey': ANON_KEY,
+          'Authorization': `Bearer ${session.session.access_token}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify({
+          ...data,
+          user_id: session.session.user.id,
+          needs_scraping: true
         })
-        .sort((a, b) => b.area - a.area);
+      });
 
-      // Find the first valid image URL
-      let finalImageUrl = '';
-      
-      // First try meta tags
-      for (const [key, value] of Object.entries(metaTags)) {
-        if (value && isValidUrl(value)) {
-          finalImageUrl = value;
-          break;
-        }
+      if (!supabaseResponse.ok) {
+        const supabaseError = await supabaseResponse.text();
+        throw new Error(`Failed to save to Supabase: ${supabaseResponse.status} ${supabaseError}`);
       }
 
-      // If no meta tag image, use the largest valid image
-      if (!finalImageUrl && images.length > 0) {
-        finalImageUrl = images[0].src;
-      }
-
-      return finalImageUrl || '';
+      return { success: true, message: 'Saved directly to Supabase' };
     }
-  });
 
-  return imageData;
-}
-
-// Function to get page summary
-async function getPageSummary(tabId) {
-  const [{ result: summaryData }] = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: () => {
-      // Try to get meta description first
-      const metaDescription = document.querySelector('meta[name="description"]')?.content
-        || document.querySelector('meta[property="og:description"]')?.content
-        || document.querySelector('meta[name="twitter:description"]')?.content;
-
-      if (metaDescription) {
-        return metaDescription;
-      }
-
-      // If no meta description, create a brief summary from the content
-      const mainContent = document.body.innerText;
-      // Get first 250 characters of actual content, stopping at the last complete word
-      const briefSummary = mainContent
-        .replace(/\s+/g, ' ') // Replace multiple spaces with single space
-        .trim()
-        .substring(0, 250) // Get first 250 characters
-        .replace(/\s\S*$/, ''); // Remove partial word at the end
-
-      return briefSummary + '...';
-    }
-  });
-
-  return summaryData;
+    return responseText ? JSON.parse(responseText) : { success: true };
+  } catch (error) {
+    console.error('Save error:', error);
+    throw error;
+  }
 }
 
 // Add logout handler function
@@ -240,6 +184,278 @@ async function handleLogout() {
   } catch (error) {
     console.error('Logout error:', error);
     showMessage('Failed to logout', true);
+  }
+}
+
+// Add these functions back
+async function getMainImage(tabId) {
+  const [{ result: imageData }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const isValidUrl = (url) => {
+        try {
+          new URL(url);
+          return url.startsWith('http') || url.startsWith('https');
+        } catch {
+          return false;
+        }
+      };
+
+      // Get meta images first
+      const metaTags = {
+        'og:image': document.querySelector('meta[property="og:image"]')?.content,
+        'og:image:secure_url': document.querySelector('meta[property="og:image:secure_url"]')?.content,
+        'twitter:image': document.querySelector('meta[name="twitter:image"]')?.content,
+        'twitter:image:src': document.querySelector('meta[name="twitter:image:src"]')?.content,
+      };
+
+      for (const [key, value] of Object.entries(metaTags)) {
+        if (value && isValidUrl(value)) return value;
+      }
+
+      // Fallback to largest image
+      const images = Array.from(document.getElementsByTagName('img'))
+        .filter(img => {
+          const width = img.naturalWidth || img.width;
+          const height = img.naturalHeight || img.height;
+          return width > 100 && height > 100 && isValidUrl(img.src);
+        })
+        .sort((a, b) => {
+          const areaA = (a.naturalWidth || a.width) * (a.naturalHeight || a.height);
+          const areaB = (b.naturalWidth || b.width) * (b.naturalHeight || b.height);
+          return areaB - areaA;
+        });
+
+      return images[0]?.src || '';
+    }
+  });
+  return imageData;
+}
+
+async function getPageSummary(tabId) {
+  const [{ result: summaryData }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const metaDescription = document.querySelector('meta[name="description"]')?.content
+        || document.querySelector('meta[property="og:description"]')?.content
+        || document.querySelector('meta[name="twitter:description"]')?.content;
+
+      if (metaDescription) return metaDescription;
+
+      const mainContent = document.body.innerText;
+      const briefSummary = mainContent
+        .replace(/\s+/g, ' ')
+        .trim()
+        .substring(0, 250)
+        .replace(/\s\S*$/, '');
+
+      return briefSummary + '...';
+    }
+  });
+  return summaryData;
+}
+
+// Add this function at the top of popup.js
+async function getCurrentTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab;
+}
+
+// Then modify your save function to use it:
+async function handleSave() {
+  try {
+    setLoading(true);
+    showMessage('');
+
+    // Check authentication first
+    const session = await chrome.storage.local.get('session');
+    if (!session.session) {
+      throw new Error('Not authenticated');
+    }
+
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    
+    // Get image URL and description with YouTube handling
+    const [imageResult, summaryResult] = await Promise.all([
+      chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => {
+          // Special handling for YouTube
+          if (window.location.hostname.includes('youtube.com')) {
+            // Try to get video thumbnail
+            const videoId = new URLSearchParams(window.location.search).get('v');
+            if (videoId) {
+              return `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
+            }
+          }
+          
+          // Regular image detection for other sites
+          let maxImage = '';
+          let maxSize = 0;
+          
+          // First check meta images
+          const ogImage = document.querySelector('meta[property="og:image"]')?.content;
+          if (ogImage && !ogImage.includes('logo')) return ogImage;
+          
+          const twitterImage = document.querySelector('meta[name="twitter:image"]')?.content;
+          if (twitterImage && !twitterImage.includes('logo')) return twitterImage;
+          
+          // Then check all images
+          document.querySelectorAll('img').forEach(img => {
+            const size = (img.naturalWidth || img.width) * (img.naturalHeight || img.height);
+            if (size > maxSize && img.src && !img.src.includes('logo')) {
+              maxSize = size;
+              maxImage = img.src;
+            }
+          });
+          
+          return maxImage;
+        }
+      }),
+      chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => {
+          // Special handling for YouTube description
+          if (window.location.hostname.includes('youtube.com')) {
+            // Try to get video description from various possible selectors
+            const description = 
+              // New YouTube layout selectors
+              document.querySelector('ytd-watch-metadata #description-inline-expander .ytd-expanded-metadata-renderer')?.textContent ||
+              document.querySelector('ytd-watch-metadata #description-inline-expander')?.textContent ||
+              // Older YouTube layout selectors
+              document.querySelector('ytd-expander#description yt-formatted-string')?.textContent ||
+              document.querySelector('#description .content')?.textContent ||
+              // Fallback to meta description only if it's not the default YouTube description
+              (() => {
+                const metaDesc = document.querySelector('meta[name="description"]')?.content;
+                return metaDesc?.includes('Enjoy the videos and music you love') ? null : metaDesc;
+              })();
+            
+            if (description) {
+              // Clean up the description
+              return description
+                .trim()
+                .replace(/\n\n+/g, '\n') // Remove extra newlines
+                .substring(0, 500) + (description.length > 500 ? '...' : '');
+            }
+          }
+          
+          // Regular summary detection for other sites
+          const metaDesc = document.querySelector('meta[name="description"]')?.content
+            || document.querySelector('meta[property="og:description"]')?.content
+            || document.querySelector('meta[name="twitter:description"]')?.content;
+          
+          if (metaDesc) return metaDesc;
+          
+          // Fallback to content extraction
+          const getTextContent = (elem) => {
+            if (!elem) return '';
+            return elem.innerText
+              .replace(/\s+/g, ' ')
+              .trim()
+              .substring(0, 250);
+          };
+          
+          const articleText = getTextContent(document.querySelector('article'));
+          if (articleText) return articleText + '...';
+          
+          const mainText = getTextContent(document.querySelector('main'));
+          if (mainText) return mainText + '...';
+          
+          const bodyText = getTextContent(document.body);
+          return bodyText ? bodyText + '...' : '';
+        }
+      })
+    ]);
+
+    // Rest of your save logic...
+    const data = {
+      type: 'link',
+      title: tab.url.includes('youtube.com') 
+        ? tab.title.replace(/^\([0-9]+\)\s*/, '') // Remove notification count prefix
+        : tab.title,
+      url: tab.url,
+      tags: tagsInput?.value ? tagsInput.value.split(',').map(t => t.trim()).filter(Boolean) : [],
+      user_id: session.session.user.id,
+      image_url: imageResult[0]?.result || null,
+      summary: summaryResult[0]?.result || null
+    };
+
+    console.log('Saving data:', data);
+    await saveToSupabase(data);
+    
+    showMessage('Saved successfully!', 'success');
+    if (tagsInput) tagsInput.value = '';
+    setTimeout(() => window.close(), 1000);
+
+  } catch (error) {
+    console.error('Save error:', error);
+    showMessage(error.message || 'Failed to save', 'error');
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function captureFullPage(tabId) {
+  try {
+    console.log('Starting screenshot capture for tab:', tabId);
+    
+    // Get the full page dimensions
+    const [{ result: dimensions }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => ({
+        width: Math.max(
+          document.documentElement.clientWidth,
+          document.body.clientWidth
+        ),
+        height: Math.max(
+          document.documentElement.scrollHeight,
+          document.body.scrollHeight
+        )
+      })
+    });
+    
+    console.log('Page dimensions:', dimensions);
+
+    // Update tab zoom and scroll position
+    await chrome.tabs.setZoom(tabId, 1.0);
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => window.scrollTo(0, 0)
+    });
+
+    // Capture the visible tab
+    const dataUrl = await chrome.tabs.captureVisibleTab(null, {
+      format: 'png',
+      quality: 80
+    });
+
+    // Create a temporary canvas to process the image
+    const img = new Image();
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    // Wait for image to load
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = dataUrl;
+    });
+
+    // Set canvas dimensions
+    canvas.width = img.width;
+    canvas.height = img.height;
+
+    // Draw and compress
+    ctx.drawImage(img, 0, 0);
+    const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.7);
+
+    console.log('Screenshot captured and compressed');
+    return compressedDataUrl;
+
+  } catch (error) {
+    console.error('Screenshot capture failed:', error);
+    return null;
   }
 }
 
@@ -276,58 +492,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Handle save button click
   if (saveButton) {
-    saveButton.addEventListener('click', async function() {
-      setLoading(true);
-      showMessage('');
-      console.log('Save button clicked');
-
-      try {
-        // Get current tab
-        const [tab] = await chrome.tabs.query({ 
-          active: true, 
-          currentWindow: true 
-        });
-
-        // Get main image URL
-        const mainImageUrl = await getMainImage(tab.id);
-        console.log('Found main image URL:', mainImageUrl);
-
-        // Get selected text
-        const [{ result: selection }] = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: () => window.getSelection()?.toString() || ''
-        });
-
-        // Get page summary
-        const pageSummary = await getPageSummary(tab.id);
-
-        // Prepare data with the correct field mapping
-        const data = {
-          type: selection ? 'highlight' : 'link',
-          title: tab.title,
-          url: tab.url,
-          summary: pageSummary, // Use the brief summary instead of full content
-          content: '', // Leave content field empty
-          tags: tagsInput?.value ? tagsInput.value.split(',').map(t => t.trim()).filter(Boolean) : [],
-          created_at: new Date().toISOString(),
-          image_url: mainImageUrl,
-          highlighted_text: selection || '' // Save selection to highlighted_text if it exists
-        };
-
-        console.log('Data being saved to Supabase:', JSON.stringify(data, null, 2));
-
-        await saveToSupabase(data);
-        showMessage('Saved successfully!');
-        if (tagsInput) {
-          tagsInput.value = '';
-        }
-      } catch (error) {
-        console.error('Save error:', error);
-        showMessage(error.message || 'Failed to save', true);
-      } finally {
-        setLoading(false);
-      }
-    });
+    saveButton.addEventListener('click', handleSave);
   }
 
   // Add Enter key support

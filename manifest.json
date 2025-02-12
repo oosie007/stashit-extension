@@ -1,21 +1,27 @@
 {
   "manifest_version": 3,
   "name": "StashIt",
-  "version": "1.0",
-  "description": "Stash anything from the web - links, highlights, and more",
+  "version": "1.0.0",
+  "description": "Save and organize web content",
   "permissions": [
+    "contextMenus",
     "activeTab",
+    "storage",
+    "notifications",
     "scripting",
     "tabs",
-    "contextMenus",
-    "notifications",
-    "storage"
+    "downloads",
+    "desktopCapture"
   ],
   "host_permissions": [
-    "https://*.supabase.co/*"
+    "https://*.supabase.co/*",
+    "http://localhost:3000/*",
+    "https://stashit-nine.vercel.app/*",
+    "<all_urls>"
   ],
   "background": {
-    "service_worker": "src/background.js"
+    "service_worker": "src/background.js",
+    "type": "module"
   },
   "action": {
     "default_popup": "src/popup.html",
@@ -26,11 +32,16 @@
     }
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'"
+    "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' data: blob:; connect-src 'self' data: blob: https://*.supabase.co http://localhost:3000/* https://stashit-nine.vercel.app/* https://stashit-nine.vercel.app/api/* https://stashit-nine.vercel.app/api/items https://stashit-nine.vercel.app/api/scrape"
   },
   "icons": {
     "16": "src/icons/icon16.png",
     "48": "src/icons/icon48.png",
     "128": "src/icons/icon128.png"
-  }
+  },
+  "content_scripts": [{
+    "matches": ["<all_urls>"],
+    "js": ["content.js"]
+  }],
+  "options_page": "options.html"
 } 
