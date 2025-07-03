@@ -3,11 +3,23 @@
 <head>
   <title>StashIt</title>
   <link rel="stylesheet" href="popup.css">
+  <style>
+    html, body {
+      width: 320px;
+      min-width: 320px;
+      max-width: 320px;
+      height: 480px;
+      min-height: 480px;
+      max-height: 600px;
+      overflow-x: hidden;
+      box-sizing: border-box;
+    }
+  </style>
 </head>
 <body>
   <div class="popup">
     <div class="header">
-      <h1>StashIt</h1>
+      <img src="logo.png" alt="StashIt Logo" class="main-logo" />
       <button id="logoutButton" class="icon-button" title="Logout">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
